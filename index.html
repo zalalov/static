@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Crypto RSI Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+    <header>
+        <h1>Top 20 Crypto RSI</h1>
+        <p>Relative Strength Index for the top 20 cryptocurrencies by market capitalization.</p>
+    </header>
+    <main>
+        <section class="controls">
+            <label for="period-select">RSI period:</label>
+            <select id="period-select">
+                <option value="14">14</option>
+                <option value="21">21</option>
+                <option value="7">7</option>
+            </select>
+            <label for="range-select">Historical range:</label>
+            <select id="range-select">
+                <option value="7">7 days</option>
+                <option value="14">14 days</option>
+                <option value="30">30 days</option>
+                <option value="90">90 days</option>
+            </select>
+            <button id="refresh-btn" type="button">Refresh Data</button>
+        </section>
+        <section class="chart-container">
+            <canvas id="rsiChart" aria-label="RSI multi-line chart for the top 20 cryptocurrencies" role="img"></canvas>
+        </section>
+        <section class="status" id="status" aria-live="polite"></section>
+    </main>
+    <footer>
+        <p>Data source: <a href="https://www.coingecko.com/" target="_blank" rel="noreferrer">CoinGecko</a></p>
+    </footer>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3" integrity="sha384-Gje7j6UIJ/zAYnhHZ3Cwskp1RjTGbeCB6SGjZVweF0g3wZHzM6tzeq7czG2K5lqF" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" integrity="sha384-rOJ6oOe1H6DTVfWXPASvll6AbJLz7TpGROq7YXBh1P0gDDwKt7wlxV90oCbGyF/F" crossorigin="anonymous"></script>
+    <script src="app.js" type="module"></script>
+</body>
+</html>
