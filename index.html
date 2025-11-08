@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Crypto RSI Dashboard</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2064%2064%27%3E%3Crect%20width%3D%2764%27%20height%3D%2764%27%20rx%3D%2712%27%20ry%3D%2712%27%20fill%3D%27%230f172a%27%2F%3E%3Ctext%20x%3D%2718%27%20y%3D%2746%27%20font-family%3D%27Inter%2C%20Arial%2C%20sans-serif%27%20font-size%3D%2736%27%20fill%3D%27%23fbbf24%27%3E%E2%82%BF%3C%2Ftext%3E%3C%2Fsvg%3E" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
@@ -11,8 +12,8 @@
 </head>
 <body>
     <header>
-        <h1>Top 20 Crypto RSI</h1>
-        <p>Relative Strength Index for the top 20 cryptocurrencies by market capitalization.</p>
+        <h1>Top Crypto RSI</h1>
+        <p>Relative Strength Index for leading cryptocurrencies by market capitalization.</p>
     </header>
     <main>
         <section class="controls">
@@ -32,15 +33,15 @@
             <button id="refresh-btn" type="button">Refresh Data</button>
         </section>
         <section class="chart-container">
-            <canvas id="rsiChart" aria-label="RSI multi-line chart for the top 20 cryptocurrencies" role="img"></canvas>
+            <canvas id="rsiChart" aria-label="RSI multi-line chart for leading cryptocurrencies" role="img"></canvas>
         </section>
         <section class="status" id="status" aria-live="polite"></section>
     </main>
     <footer>
-        <p>Data source: <a href="https://www.coingecko.com/" target="_blank" rel="noreferrer">CoinGecko</a></p>
+        <p>Data source: <a href="https://www.coingecko.com/en/api/documentation" target="_blank" rel="noreferrer">CoinGecko</a></p>
     </footer>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3" integrity="sha384-Gje7j6UIJ/zAYnhHZ3Cwskp1RjTGbeCB6SGjZVweF0g3wZHzM6tzeq7czG2K5lqF" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" integrity="sha384-rOJ6oOe1H6DTVfWXPASvll6AbJLz7TpGROq7YXBh1P0gDDwKt7wlxV90oCbGyF/F" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
     <script src="app.js" type="module"></script>
 </body>
 </html>

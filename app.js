@@ -1,5 +1,6 @@
 const API_BASE = 'https://api.coingecko.com/api/v3';
-const MAX_COINS = 20;
+const MAX_COINS = 8;
+const RATE_LIMIT_DELAY_MS = 2000;
 const chartCanvas = document.getElementById('rsiChart');
 const periodSelect = document.getElementById('period-select');
 const rangeSelect = document.getElementById('range-select');
@@ -8,13 +9,62 @@ const statusEl = document.getElementById('status');
 
 let rsiChart = null;
 let cachedCoins = [];
+const historyCache = new Map();
+let lastRequestTime = 0;
+let isLoading = false;
+let loadQueued = false;
+let queueForceRefresh = false;
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function fetchJson(url, options = {}) {
+    const { retries = 3, retryDelay = 1500, ...rest } = options;
+
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+        try {
+            const response = await fetch(url, { mode: 'cors', ...rest });
+
+            if (response.status === 429) {
+                if (attempt === retries) {
+                    throw new Error('Rate limited by upstream service');
+                }
+
+                const retryAfter = Number(response.headers.get('retry-after'));
+                const delayMs = Number.isFinite(retryAfter) ? retryAfter * 1000 : retryDelay;
+                await delay(delayMs);
+                continue;
+            }
+
+            if (!response.ok) {
+                throw new Error(`Request failed with status ${response.status}`);
+            }
+
+            return response.json();
+        } catch (error) {
+            if (attempt === retries) {
+                throw error;
+            }
+            await delay(retryDelay);
+        }
+    }
+
+    throw new Error('Unexpected fetch retry exhaustion');
+}
 
 const palette = [
     '#38bdf8', '#f97316', '#facc15', '#34d399', '#a855f7', '#ec4899', '#22d3ee', '#f87171', '#c084fc', '#4ade80',
     '#60a5fa', '#fb7185', '#fbbf24', '#2dd4bf', '#818cf8', '#f472b6', '#14b8a6', '#e879f9', '#93c5fd', '#f59e0b'
 ];
 
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function rateLimitedFetchJson(url, options) {
+    const now = Date.now();
+    const waitFor = Math.max(0, RATE_LIMIT_DELAY_MS - (now - lastRequestTime));
+    if (waitFor > 0) {
+        await delay(waitFor);
+    }
+    lastRequestTime = Date.now();
+    return fetchJson(url, options);
+}
 
 async function fetchTopCoins() {
     if (cachedCoins.length > 0) {
@@ -22,25 +72,54 @@ async function fetchTopCoins() {
     }
 
     setStatus('Fetching top cryptocurrencies…');
-    const url = `${API_BASE}/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=${MAX_COINS}&page=1&sparkline=false`;
-    const response = await fetch(url);
+    const url = new URL(`${API_BASE}/coins/markets`);
+    url.searchParams.set('vs_currency', 'usd');
+    url.searchParams.set('order', 'market_cap_desc');
+    url.searchParams.set('per_page', MAX_COINS.toString());
+    url.searchParams.set('page', '1');
+    url.searchParams.set('sparkline', 'false');
 
-    if (!response.ok) {
-        throw new Error(`Unable to fetch markets (${response.status})`);
-    }
+    const payload = await rateLimitedFetchJson(url.toString());
+    const markets = Array.isArray(payload) ? payload : [];
 
-    const data = await response.json();
-    cachedCoins = data.map((coin) => ({ id: coin.id, name: coin.name, symbol: coin.symbol.toUpperCase() }));
+    cachedCoins = markets.map((asset) => ({
+        id: asset.id,
+        name: asset.name,
+        symbol: (asset.symbol || '').toUpperCase(),
+    }));
     return cachedCoins;
 }
 
+function resolveInterval(days) {
+    if (days <= 30) return 'hourly';
+    return 'daily';
+}
+
 async function fetchMarketChart(coinId, days) {
-    const url = `${API_BASE}/coins/${coinId}/market_chart?vs_currency=usd&days=${days}&interval=hourly`;
-    const response = await fetch(url);
-    if (!response.ok) {
-        throw new Error(`Failed to fetch history for ${coinId}`);
+    const cached = historyCache.get(coinId);
+    if (cached && cached.has(days)) {
+        return cached.get(days);
     }
-    return response.json();
+
+    const interval = resolveInterval(days);
+    const url = new URL(`${API_BASE}/coins/${coinId}/market_chart`);
+    url.searchParams.set('vs_currency', 'usd');
+    url.searchParams.set('days', days);
+    url.searchParams.set('interval', interval);
+
+    const payload = await rateLimitedFetchJson(url.toString(), { retries: 4, retryDelay: 2500 });
+    const prices = Array.isArray(payload.prices) ? payload.prices : [];
+    const normalized = prices.map(([time, price]) => ({
+        time,
+        priceUsd: price,
+    }));
+
+    if (!historyCache.has(coinId)) {
+        historyCache.set(coinId, new Map());
+    }
+    historyCache.get(coinId).set(days, normalized);
+
+    return normalized;
 }
 
 function calculateRSI(prices, period) {
@@ -82,10 +161,19 @@ function calculateRSI(prices, period) {
     return rsiValues;
 }
 
-function prepareDataset(coin, chartData, period) {
-    const { prices } = chartData;
-    const closes = prices.map(([, value]) => value);
-    const timestamps = prices.map(([ts]) => ts);
+function prepareDataset(coin, history, period) {
+    const cleaned = history.filter((entry) => {
+        if (!entry || entry.priceUsd == null || entry.time == null) {
+            return false;
+        }
+
+        const price = Number(entry.priceUsd);
+        const time = Number(entry.time);
+        return Number.isFinite(price) && Number.isFinite(time);
+    });
+
+    const closes = cleaned.map((entry) => Number(entry.priceUsd));
+    const timestamps = cleaned.map((entry) => Number(entry.time));
     const rsi = calculateRSI(closes, period);
 
     const points = timestamps.map((ts, index) => ({ x: ts, y: rsi[index] ?? null }));
@@ -97,12 +185,16 @@ function prepareDataset(coin, chartData, period) {
     };
 }
 
-function updateChart(datasets) {
+function updateChart(datasets, emptyMessage = 'No RSI data available for the selected range. Try increasing the number of days.') {
     const nonEmpty = datasets.filter((dataset) => dataset.data.some((point) => point.y !== null));
 
     if (nonEmpty.length === 0) {
-        setStatus('No RSI data available for the selected range. Try increasing the number of days.');
-        return;
+        if (rsiChart) {
+            rsiChart.destroy();
+            rsiChart = null;
+        }
+        setStatus(emptyMessage);
+        return 0;
     }
 
     const chartData = nonEmpty.map((dataset, index) => ({
@@ -185,57 +277,82 @@ function updateChart(datasets) {
             },
         },
     });
+    return nonEmpty.length;
 }
 
 function setStatus(message) {
     statusEl.textContent = message;
 }
 
-async function loadData() {
+async function loadData({ forceRefresh = false } = {}) {
+    if (isLoading) {
+        loadQueued = true;
+        queueForceRefresh = queueForceRefresh || forceRefresh;
+        return;
+    }
+
+    isLoading = true;
+    if (forceRefresh) {
+        cachedCoins = [];
+        historyCache.clear();
+    }
+
     const period = Number(periodSelect.value);
     const range = Number(rangeSelect.value);
 
     try {
         const coins = await fetchTopCoins();
-        setStatus(`Fetching market data for ${coins.length} coins…`);
+        if (coins.length === 0) {
+            updateChart([], 'No coins available to chart at the moment.');
+        } else {
+            setStatus(`Fetching market data for ${coins.length} coins…`);
+        }
 
         const datasets = [];
-        for (const [index, coin] of coins.entries()) {
+        for (const coin of coins) {
             try {
-                const marketChart = await fetchMarketChart(coin.id, range);
-                datasets.push(prepareDataset(coin, marketChart, period));
+                const history = await fetchMarketChart(coin.id, range);
+                datasets.push(prepareDataset(coin, history, period));
             } catch (error) {
                 console.error(error);
             }
-
-            // Small delay to avoid hitting rate limits.
-            if (index % 5 === 4) {
-                await delay(800);
-            }
         }
 
-        updateChart(datasets);
-        setStatus(`Showing RSI for ${datasets.length} coins. Period: ${period}. Range: ${range} days.`);
+        if (coins.length > 0) {
+            const plotted = updateChart(datasets);
+            if (plotted > 0) {
+                setStatus(`Showing RSI for ${plotted} coins. Period: ${period}. Range: ${range} days.`);
+            }
+        }
     } catch (error) {
         console.error(error);
         setStatus('Something went wrong while loading the data. Please try again later.');
+    } finally {
+        isLoading = false;
+    }
+
+    if (loadQueued) {
+        const shouldForce = queueForceRefresh;
+        loadQueued = false;
+        queueForceRefresh = false;
+        await loadData({ forceRefresh: shouldForce });
     }
 }
 
-refreshButton.addEventListener('click', () => {
+refreshButton.addEventListener('click', async () => {
     setStatus('Refreshing data…');
-    loadData();
+    await loadData({ forceRefresh: true });
 });
 
-periodSelect.addEventListener('change', () => {
+periodSelect.addEventListener('change', async () => {
     setStatus('Updating RSI…');
-    loadData();
+    await loadData();
 });
 
-rangeSelect.addEventListener('change', () => {
+rangeSelect.addEventListener('change', async () => {
     setStatus('Updating RSI…');
-    loadData();
+    await loadData({ forceRefresh: true });
 });
 
 setStatus('Loading…');
-loadData();
+loadData({ forceRefresh: true });
