@@ -8,13 +8,62 @@ const statusEl = document.getElementById('status');
 
 let rsiChart = null;
 let cachedCoins = [];
+const historyCache = new Map();
+let lastRequestTime = 0;
+let isLoading = false;
+let loadQueued = false;
+let queueForceRefresh = false;
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function fetchJson(url, options = {}) {
+    const { retries = 3, retryDelay = 1500, ...rest } = options;
+
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+        try {
+            const response = await fetch(url, { mode: 'cors', ...rest });
+
+            if (response.status === 429) {
+                if (attempt === retries) {
+                    throw new Error('Rate limited by upstream service');
+                }
+
+                const retryAfter = Number(response.headers.get('retry-after'));
+                const delayMs = Number.isFinite(retryAfter) ? retryAfter * 1000 : retryDelay;
+                await delay(delayMs);
+                continue;
+            }
+
+            if (!response.ok) {
+                throw new Error(`Request failed with status ${response.status}`);
+            }
+
+            return response.json();
+        } catch (error) {
+            if (attempt === retries) {
+                throw error;
+            }
+            await delay(retryDelay);
+        }
+    }
+
+    throw new Error('Unexpected fetch retry exhaustion');
+}
 
 const palette = [
     '#38bdf8', '#f97316', '#facc15', '#34d399', '#a855f7', '#ec4899', '#22d3ee', '#f87171', '#c084fc', '#4ade80',
     '#60a5fa', '#fb7185', '#fbbf24', '#2dd4bf', '#818cf8', '#f472b6', '#14b8a6', '#e879f9', '#93c5fd', '#f59e0b'
 ];
 
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function rateLimitedFetchJson(url, options) {
+    const now = Date.now();
+    const waitFor = Math.max(0, RATE_LIMIT_DELAY_MS - (now - lastRequestTime));
+    if (waitFor > 0) {
+        await delay(waitFor);
+    }
+    lastRequestTime = Date.now();
+    return fetchJson(url, options);
+}
 
 async function fetchTopCoins() {
     if (cachedCoins.length > 0) {
@@ -133,7 +182,7 @@ function prepareDataset(coin, history, period) {
     };
 }
 
-function updateChart(datasets) {
+function updateChart(datasets, emptyMessage = 'No RSI data available for the selected range. Try increasing the number of days.') {
     const nonEmpty = datasets.filter((dataset) => dataset.data.some((point) => point.y !== null));
 
     if (nonEmpty.length === 0) {
@@ -232,22 +281,39 @@ function setStatus(message) {
     statusEl.textContent = message;
 }
 
-async function loadData() {
+async function loadData({ forceRefresh = false } = {}) {
+    if (isLoading) {
+        loadQueued = true;
+        queueForceRefresh = queueForceRefresh || forceRefresh;
+        return;
+    }
+
+    isLoading = true;
+    if (forceRefresh) {
+        cachedCoins = [];
+        historyCache.clear();
+    }
+
     const period = Number(periodSelect.value);
     const range = Number(rangeSelect.value);
 
     try {
         const coins = await fetchTopCoins();
-        setStatus(`Fetching market data for ${coins.length} coins…`);
+        if (coins.length === 0) {
+            updateChart([], 'No coins available to chart at the moment.');
+        } else {
+            setStatus(`Fetching market data for ${coins.length} coins…`);
+        }
 
         const datasets = [];
-        for (const [index, coin] of coins.entries()) {
+        for (const coin of coins) {
             try {
                 const history = await fetchMarketChart(coin.id, range);
                 datasets.push(prepareDataset(coin, history, period));
             } catch (error) {
                 console.error(error);
             }
+        }
 
             // Gentle delay to stay within public rate limits.
             await delay(150);
@@ -260,23 +326,32 @@ async function loadData() {
     } catch (error) {
         console.error(error);
         setStatus('Something went wrong while loading the data. Please try again later.');
+    } finally {
+        isLoading = false;
+    }
+
+    if (loadQueued) {
+        const shouldForce = queueForceRefresh;
+        loadQueued = false;
+        queueForceRefresh = false;
+        await loadData({ forceRefresh: shouldForce });
     }
 }
 
-refreshButton.addEventListener('click', () => {
+refreshButton.addEventListener('click', async () => {
     setStatus('Refreshing data…');
-    loadData();
+    await loadData({ forceRefresh: true });
 });
 
-periodSelect.addEventListener('change', () => {
+periodSelect.addEventListener('change', async () => {
     setStatus('Updating RSI…');
-    loadData();
+    await loadData();
 });
 
-rangeSelect.addEventListener('change', () => {
+rangeSelect.addEventListener('change', async () => {
     setStatus('Updating RSI…');
-    loadData();
+    await loadData({ forceRefresh: true });
 });
 
 setStatus('Loading…');
-loadData();
+loadData({ forceRefresh: true });
